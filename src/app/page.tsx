@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function Home() {
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "4rem 1.25rem" }}>
@@ -6,6 +8,14 @@ export default function Home() {
         Starter homepage is ready. Next phases will add the chat interface,
         authentication, and persistence.
       </p>
+      <div style={{ marginTop: "1rem", display: "flex", gap: "0.75rem" }}>
+        <Link href="/auth" style={{ textDecoration: "underline" }}>
+          Auth
+        </Link>
+        <Link href="/chat" style={{ textDecoration: "underline" }}>
+          Chat
+        </Link>
+      </div>
     </main>
   );
 }
