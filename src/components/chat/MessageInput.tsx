@@ -2,9 +2,10 @@ import { FormEvent, useState } from "react";
 
 type MessageInputProps = {
   onSendMessage: (message: string) => void;
+  disabled?: boolean;
 };
 
-export function MessageInput({ onSendMessage }: MessageInputProps) {
+export function MessageInput({ onSendMessage, disabled = false }: MessageInputProps) {
   const [value, setValue] = useState("");
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -23,6 +24,7 @@ export function MessageInput({ onSendMessage }: MessageInputProps) {
         value={value}
         onChange={(event) => setValue(event.target.value)}
         placeholder="Type your message..."
+        disabled={disabled}
         style={{
           flex: 1,
           padding: "0.7rem 0.8rem",
@@ -33,6 +35,7 @@ export function MessageInput({ onSendMessage }: MessageInputProps) {
       />
       <button
         type="submit"
+        disabled={disabled}
         style={{
           padding: "0.7rem 0.9rem",
           borderRadius: 8,

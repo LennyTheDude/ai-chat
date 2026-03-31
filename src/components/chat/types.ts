@@ -4,6 +4,13 @@ export type ChatMessage = {
   id: string;
   role: ChatRole;
   content: string;
+  created_at?: string;
 };
 
 export type ChatModel = "openai" | "claude";
+
+export type ChatSummary = {
+  id: string;
+  title: string;
+  created_at: string;
+};
