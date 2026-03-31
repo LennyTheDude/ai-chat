@@ -74,6 +74,43 @@ export function ChatContainer() {
     return payload.chat.id;
   };
 
+  const streamAssistantReply = async (conversation: ChatMessage[], selectedModel: ChatModel) => {
+    const assistantId = crypto.randomUUID();
+    setMessages((previous) => [...previous, { id: assistantId, role: "assistant", content: "" }]);
+
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: selectedModel,
+        messages: conversation.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+      }),
+    });
+
+    if (!response.ok || !response.body) {
+      throw new Error("Failed to stream assistant response.");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let aggregated = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      aggregated += decoder.decode(value, { stream: true });
+      setMessages((previous) =>
+        previous.map((message) =>
+          message.id === assistantId ? { ...message, content: aggregated } : message,
+        ),
+      );
+    }
+  };
+
   const handleSendMessage = async (content: string) => {
     setIsSending(true);
     setError(null);
@@ -104,6 +141,8 @@ export function ChatContainer() {
       }
 
       setMessages((previous) => [...previous, payload.message!]);
+      const conversation = [...messages, payload.message];
+      await streamAssistantReply(conversation, model);
     } catch (sendError) {
       const message = sendError instanceof Error ? sendError.message : "Unable to send message.";
       setError(message);
