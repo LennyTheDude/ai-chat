@@ -1,13 +1,15 @@
+import { anthropic } from "@ai-sdk/anthropic";
+import { openai } from "@ai-sdk/openai";
+
 export enum AIModel {
   OPENAI = "openai",
   CLAUDE = "claude",
 }
 
 export function getModel(model: AIModel) {
-  // Keep this abstraction lightweight until real provider wiring in Phase 7.
   if (model === AIModel.CLAUDE) {
-    return { provider: "anthropic", model: "claude-stub" };
+    return anthropic("claude-3-5-haiku-latest");
   }
 
-  return { provider: "openai", model: "gpt-stub" };
+  return openai("gpt-4o-mini");
 }

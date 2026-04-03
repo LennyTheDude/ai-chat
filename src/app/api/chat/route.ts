@@ -1,4 +1,6 @@
 import { AIModel, getModel } from "@/lib/ai";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { streamText } from "ai";
 
 type ChatApiMessage = {
   role?: "user" | "assistant" | "system";
@@ -6,18 +8,29 @@ type ChatApiMessage = {
 };
 
 type ChatApiRequest = {
+  chatId?: string;
   model?: AIModel;
   messages?: ChatApiMessage[];
 };
 
 export async function POST(request: Request) {
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = (await request.json().catch(() => ({}))) as ChatApiRequest;
+  const chatId = body.chatId;
   const model = body.model;
   const messages = body.messages;
 
-  if (!model || !messages || !Array.isArray(messages)) {
+  if (!chatId || !model || !messages || !Array.isArray(messages)) {
     return Response.json(
-      { error: "Invalid request body. Expected model and messages." },
+      { error: "Invalid request body. Expected chatId, model and messages." },
       { status: 400 },
     );
   }
@@ -26,31 +39,58 @@ export async function POST(request: Request) {
     return Response.json({ error: "Unsupported model." }, { status: 400 });
   }
 
-  const selectedModel = getModel(model);
-  const lastUserMessage = [...messages]
-    .reverse()
-    .find((message) => message.role === "user")?.content;
+  const { data: chat, error: chatError } = await supabase
+    .from("chats")
+    .select("id")
+    .eq("id", chatId)
+    .eq("user_id", user.id)
+    .single();
 
-  const replyText = `[mock:${selectedModel.provider}/${selectedModel.model}] ${
-    lastUserMessage ? `You said: "${lastUserMessage}"` : "No user message provided."
-  }`;
-  const chunks = replyText.split(" ");
-  const encoder = new TextEncoder();
+  if (chatError || !chat) {
+    return Response.json({ error: "Chat not found" }, { status: 404 });
+  }
 
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      for (const chunk of chunks) {
-        controller.enqueue(encoder.encode(`${chunk} `));
-        await new Promise((resolve) => setTimeout(resolve, 60));
-      }
-      controller.close();
-    },
-  });
+  try {
+    const result = streamText({
+      model: getModel(model),
+      messages: messages.map((message) => ({
+        role: message.role ?? "user",
+        content: message.content ?? "",
+      })),
+      onFinish: async ({ text, totalUsage }) => {
+        if (text.trim()) {
+          await supabase.from("messages").insert({
+            chat_id: chatId,
+            role: "assistant",
+            content: text,
+          });
+        }
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "no-store",
-    },
-  });
+        const usedTokens = totalUsage.totalTokens ?? 0;
+        if (usedTokens > 0) {
+          const { data: usageRow } = await supabase
+            .from("usage")
+            .select("tokens_used")
+            .eq("user_id", user.id)
+            .maybeSingle();
+
+          const nextTokens = (usageRow?.tokens_used ?? 0) + usedTokens;
+          await supabase
+            .from("usage")
+            .upsert({ user_id: user.id, tokens_used: nextTokens }, { onConflict: "user_id" });
+        }
+      },
+    });
+
+    return result.toTextStreamResponse({
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    });
+  } catch {
+    return Response.json(
+      { error: "Failed to generate AI response. Check provider API keys." },
+      { status: 500 },
+    );
+  }
 }

@@ -74,7 +74,11 @@ export function ChatContainer() {
     return payload.chat.id;
   };
 
-  const streamAssistantReply = async (conversation: ChatMessage[], selectedModel: ChatModel) => {
+  const streamAssistantReply = async (
+    chatId: string,
+    conversation: ChatMessage[],
+    selectedModel: ChatModel,
+  ) => {
     const assistantId = crypto.randomUUID();
     setMessages((previous) => [...previous, { id: assistantId, role: "assistant", content: "" }]);
 
@@ -82,6 +86,7 @@ export function ChatContainer() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        chatId,
         model: selectedModel,
         messages: conversation.map((message) => ({
           role: message.role,
@@ -142,7 +147,7 @@ export function ChatContainer() {
 
       setMessages((previous) => [...previous, payload.message!]);
       const conversation = [...messages, payload.message];
-      await streamAssistantReply(conversation, model);
+      await streamAssistantReply(chatId, conversation, model);
     } catch (sendError) {
       const message = sendError instanceof Error ? sendError.message : "Unable to send message.";
       setError(message);
