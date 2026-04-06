@@ -7,12 +7,28 @@ type ModelSelectorProps = {
 
 export function ModelSelector({ value, onChange }: ModelSelectorProps) {
   return (
-    <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-      <span style={{ fontSize: "0.9rem", color: "#666" }}>Model</span>
+    <label
+      style={{
+        display: "flex",
+        gap: "0.5rem",
+        alignItems: "center",
+        fontSize: "0.875rem",
+        color: "var(--muted, #6b7280)",
+      }}
+    >
+      <span style={{ fontWeight: 500 }}>Model</span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value as ChatModel)}
-        style={{ padding: "0.4rem 0.5rem", borderRadius: 6, border: "1px solid #ddd" }}
+        style={{
+          padding: "0.45rem 0.65rem",
+          borderRadius: 10,
+          border: "1px solid #d1d5db",
+          background: "#fff",
+          fontSize: "0.875rem",
+          cursor: "pointer",
+          color: "#111827",
+        }}
       >
         <option value="openai">OpenAI</option>
         <option value="claude">Claude</option>

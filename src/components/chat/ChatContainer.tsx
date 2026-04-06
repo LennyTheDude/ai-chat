@@ -1,6 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import type { CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getErrorMessageFromResponse } from "@/lib/apiErrors";
+import { getModelDisplayLabel } from "@/lib/modelLabels";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
 import { ModelSelector } from "./ModelSelector";
@@ -12,19 +15,36 @@ export function ChatContainer() {
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [isLoadingChats, setIsLoadingChats] = useState(true);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<ChatMessage[]>([]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [messages]);
 
   const loadMessages = useCallback(async (chatId: string) => {
+    setIsLoadingMessages(true);
+    setError(null);
     const response = await fetch(`/api/chats/${chatId}`);
     const payload = (await response.json()) as { messages?: ChatMessage[]; error?: string };
 
     if (!response.ok) {
-      setError(payload.error ?? "Failed to load messages.");
+      setError(await getErrorMessageFromResponse(response, payload));
+      setIsLoadingMessages(false);
       return;
     }
 
     setMessages(payload.messages ?? []);
+    setIsLoadingMessages(false);
   }, []);
 
   const loadChats = useCallback(async () => {
@@ -35,7 +55,7 @@ export function ChatContainer() {
     const payload = (await response.json()) as { chats?: ChatSummary[]; error?: string };
 
     if (!response.ok) {
-      setError(payload.error ?? "Failed to load chats.");
+      setError(await getErrorMessageFromResponse(response, payload));
       setIsLoadingChats(false);
       return;
     }
@@ -49,6 +69,7 @@ export function ChatContainer() {
       await loadMessages(firstChatId);
     } else {
       setMessages([]);
+      setActiveChatId(null);
     }
 
     setIsLoadingChats(false);
@@ -67,7 +88,7 @@ export function ChatContainer() {
     const payload = (await response.json()) as { chat?: ChatSummary; error?: string };
 
     if (!response.ok || !payload.chat) {
-      throw new Error(payload.error ?? "Failed to create chat.");
+      throw new Error(await getErrorMessageFromResponse(response, payload));
     }
 
     setChats((previous) => [payload.chat!, ...previous]);
@@ -95,24 +116,36 @@ export function ChatContainer() {
       }),
     });
 
-    if (!response.ok || !response.body) {
-      throw new Error("Failed to stream assistant response.");
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      setMessages((previous) => previous.filter((m) => m.id !== assistantId));
+      throw new Error(await getErrorMessageFromResponse(response, payload));
+    }
+
+    if (!response.body) {
+      setMessages((previous) => previous.filter((m) => m.id !== assistantId));
+      throw new Error("No response body from assistant.");
     }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let aggregated = "";
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      aggregated += decoder.decode(value, { stream: true });
-      setMessages((previous) =>
-        previous.map((message) =>
-          message.id === assistantId ? { ...message, content: aggregated } : message,
-        ),
-      );
+        aggregated += decoder.decode(value, { stream: true });
+        setMessages((previous) =>
+          previous.map((message) =>
+            message.id === assistantId ? { ...message, content: aggregated } : message,
+          ),
+        );
+      }
+    } catch {
+      setMessages((previous) => previous.filter((m) => m.id !== assistantId));
+      throw new Error("Stream interrupted. Try sending again.");
     }
   };
 
@@ -142,12 +175,13 @@ export function ChatContainer() {
       const payload = (await response.json()) as { message?: ChatMessage; error?: string };
 
       if (!response.ok || !payload.message) {
-        throw new Error(payload.error ?? "Failed to save message.");
+        throw new Error(await getErrorMessageFromResponse(response, payload));
       }
 
-      setMessages((previous) => [...previous, payload.message!]);
-      const conversation = [...messages, payload.message];
-      await streamAssistantReply(chatId, conversation, model);
+      const userRow = payload.message;
+      const historyForModel = [...messagesRef.current, userRow];
+      setMessages(historyForModel);
+      await streamAssistantReply(chatId, historyForModel, model);
     } catch (sendError) {
       const message = sendError instanceof Error ? sendError.message : "Unable to send message.";
       setError(message);
@@ -156,10 +190,10 @@ export function ChatContainer() {
     }
   };
 
-  const handleSelectChat = async (chatId: string) => {
+  const handleSelectChat = (chatId: string) => {
     setActiveChatId(chatId);
     setError(null);
-    await loadMessages(chatId);
+    void loadMessages(chatId);
   };
 
   const handleNewChat = () => {
@@ -168,84 +202,179 @@ export function ChatContainer() {
     setError(null);
   };
 
+  const sidebarButtonBase: CSSProperties = {
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    padding: "0.5rem 0.65rem",
+    textAlign: "left",
+    background: "#fff",
+    cursor: "pointer",
+    fontSize: "0.875rem",
+    lineHeight: 1.35,
+    transition: "background 0.15s ease",
+    color: "#111827",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  };
+
+  const emptyHintMain =
+    !isLoadingChats && chats.length === 0 && activeChatId === null
+      ? "No chats yet. Send a message below to start your first conversation."
+      : !activeChatId && chats.length > 0
+        ? "New chat — send a message to create it."
+        : activeChatId && !isLoadingMessages && messages.length === 0
+          ? "Send a message to begin this chat."
+          : null;
+
   return (
     <section
       style={{
-        maxWidth: 860,
+        maxWidth: 920,
         margin: "0 auto",
         padding: "2rem 1.25rem",
         display: "flex",
         flexDirection: "row",
-        gap: "1rem",
+        gap: "1.25rem",
+        fontFamily: "system-ui, sans-serif",
       }}
     >
       <aside
         style={{
-          width: 220,
+          width: 232,
+          flexShrink: 0,
           border: "1px solid #e5e7eb",
-          borderRadius: 12,
+          borderRadius: 14,
           padding: "1rem",
           display: "flex",
           flexDirection: "column",
-          gap: "0.65rem",
+          gap: "0.75rem",
+          background: "#fafafa",
         }}
       >
         <button
+          type="button"
           onClick={handleNewChat}
-          style={{ border: "1px solid #ddd", borderRadius: 8, padding: "0.5rem", background: "#fff", cursor: "pointer", color: "#000" }}
+          style={{
+            border: "1px solid #171717",
+            borderRadius: 10,
+            padding: "0.55rem 0.75rem",
+            background: "#171717",
+            color: "#fff",
+            cursor: "pointer",
+            fontSize: "0.9rem",
+            fontWeight: 600,
+          }}
         >
           + New chat
         </button>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
           {isLoadingChats ? (
-            <p style={{ fontSize: "0.9rem", color: "#666" }}>Loading chats...</p>
+            <>
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="chat-sidebar-skeleton" />
+              ))}
+            </>
           ) : chats.length === 0 ? (
-            <p style={{ fontSize: "0.9rem", color: "#666" }}>No saved chats yet.</p>
+            <p style={{ fontSize: "0.875rem", color: "#6b7280", lineHeight: 1.5, margin: 0 }}>
+              No saved chats yet.
+            </p>
           ) : (
             chats.map((chat) => (
               <button
                 key={chat.id}
-                onClick={() => void handleSelectChat(chat.id)}
+                type="button"
+                onClick={() => handleSelectChat(chat.id)}
+                title={chat.title}
                 style={{
-                  border: "1px solid #ddd",
-                  borderRadius: 8,
-                  padding: "0.45rem 0.55rem",
-                  textAlign: "left",
-                  background: activeChatId === chat.id ? "#f3f4f6" : "#fff",
-                  cursor: "pointer",
+                  ...sidebarButtonBase,
+                  background: activeChatId === chat.id ? "#e5e7eb" : "#fff",
+                  fontWeight: activeChatId === chat.id ? 600 : 400,
+                }}
+                onMouseEnter={(e) => {
+                  if (activeChatId !== chat.id) e.currentTarget.style.background = "#f3f4f6";
+                }}
+                onMouseLeave={(e) => {
+                  if (activeChatId !== chat.id) e.currentTarget.style.background = "#fff";
                 }}
               >
-                {chat.title}
+                {chat.title.length > 28 ? `${chat.title.slice(0, 28)}…` : chat.title}
               </button>
             ))
           )}
         </div>
       </aside>
 
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "1rem" }}>
-        <header style={{ display: "flex", justifyContent: "space-between", gap: "1rem" }}>
-          <h1 style={{ fontSize: "1.5rem" }}>Chat</h1>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "1rem", minWidth: 0 }}>
+        <header
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "0.75rem 1rem",
+          }}
+        >
+          <div>
+            <h1 style={{ fontSize: "1.5rem", fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
+              Chat
+            </h1>
+            <p style={{ margin: "0.35rem 0 0", fontSize: "0.8rem", color: "#6b7280" }}>
+              Model: {getModelDisplayLabel(model)}
+            </p>
+          </div>
           <ModelSelector value={model} onChange={setModel} />
         </header>
 
         <div
+          ref={scrollRef}
           style={{
-            minHeight: 380,
+            minHeight: 360,
+            maxHeight: "min(58vh, 520px)",
+            overflowY: "auto",
             border: "1px solid #e5e7eb",
-            borderRadius: 12,
-            padding: "1rem",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "flex-end",
+            borderRadius: 14,
+            padding: "1.1rem",
+            background: "#fff",
+            scrollBehavior: "smooth",
           }}
         >
-          <MessageList messages={messages} />
+          {isLoadingMessages ? (
+            <p style={{ fontSize: "0.95rem", color: "#6b7280", margin: 0, padding: "1rem 0" }}>
+              Loading messages…
+            </p>
+          ) : (
+            <MessageList messages={messages} emptyHint={emptyHintMain} />
+          )}
         </div>
 
-        {error ? <p style={{ color: "#b91c1c", fontSize: "0.9rem" }}>{error}</p> : null}
+        {error ? (
+          <div
+            role="alert"
+            style={{
+              color: "#b91c1c",
+              fontSize: "0.9rem",
+              lineHeight: 1.45,
+              padding: "0.65rem 0.85rem",
+              borderRadius: 10,
+              background: "#fef2f2",
+              border: "1px solid #fecaca",
+            }}
+          >
+            {error}
+          </div>
+        ) : null}
 
-        <MessageInput onSendMessage={(content) => void handleSendMessage(content)} disabled={isSending} />
+        {isSending ? (
+          <p style={{ fontSize: "0.8rem", color: "#6b7280", margin: 0 }}>Sending or streaming response…</p>
+        ) : null}
+
+        <MessageInput
+          onSendMessage={(content) => void handleSendMessage(content)}
+          disabled={isSending}
+          onDismissError={() => setError(null)}
+        />
       </div>
     </section>
   );
