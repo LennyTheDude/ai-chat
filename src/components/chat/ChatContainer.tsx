@@ -2,6 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { getErrorMessageFromResponse } from "@/lib/apiErrors";
 import { getModelDisplayLabel } from "@/lib/modelLabels";
 import { MessageInput } from "./MessageInput";
@@ -10,6 +11,7 @@ import { ModelSelector } from "./ModelSelector";
 import type { ChatMessage, ChatModel, ChatSummary } from "./types";
 
 export function ChatContainer() {
+  const router = useRouter();
   const [model, setModel] = useState<ChatModel>("openai");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chats, setChats] = useState<ChatSummary[]>([]);
@@ -31,11 +33,23 @@ export function ChatContainer() {
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
+  const redirectIfUnauthorized = useCallback(
+    (response: Response) => {
+      if (response.status === 401) {
+        router.replace("/auth");
+        return true;
+      }
+      return false;
+    },
+    [router],
+  );
+
   const loadMessages = useCallback(async (chatId: string) => {
     setIsLoadingMessages(true);
     setError(null);
     const response = await fetch(`/api/chats/${chatId}`);
     const payload = (await response.json()) as { messages?: ChatMessage[]; error?: string };
+    if (redirectIfUnauthorized(response)) return;
 
     if (!response.ok) {
       setError(await getErrorMessageFromResponse(response, payload));
@@ -45,7 +59,7 @@ export function ChatContainer() {
 
     setMessages(payload.messages ?? []);
     setIsLoadingMessages(false);
-  }, []);
+  }, [redirectIfUnauthorized]);
 
   const loadChats = useCallback(async () => {
     setIsLoadingChats(true);
@@ -53,6 +67,7 @@ export function ChatContainer() {
 
     const response = await fetch("/api/chats");
     const payload = (await response.json()) as { chats?: ChatSummary[]; error?: string };
+    if (redirectIfUnauthorized(response)) return;
 
     if (!response.ok) {
       setError(await getErrorMessageFromResponse(response, payload));
@@ -73,7 +88,7 @@ export function ChatContainer() {
     }
 
     setIsLoadingChats(false);
-  }, [loadMessages]);
+  }, [loadMessages, redirectIfUnauthorized]);
 
   useEffect(() => {
     void loadChats();
@@ -86,6 +101,9 @@ export function ChatContainer() {
       body: JSON.stringify({ title }),
     });
     const payload = (await response.json()) as { chat?: ChatSummary; error?: string };
+    if (redirectIfUnauthorized(response)) {
+      throw new Error("Unauthorized");
+    }
 
     if (!response.ok || !payload.chat) {
       throw new Error(await getErrorMessageFromResponse(response, payload));
@@ -119,6 +137,9 @@ export function ChatContainer() {
     if (!response.ok) {
       const payload = (await response.json().catch(() => ({}))) as { error?: string };
       setMessages((previous) => previous.filter((m) => m.id !== assistantId));
+      if (redirectIfUnauthorized(response)) {
+        throw new Error("Unauthorized");
+      }
       throw new Error(await getErrorMessageFromResponse(response, payload));
     }
 
@@ -173,6 +194,9 @@ export function ChatContainer() {
         }),
       });
       const payload = (await response.json()) as { message?: ChatMessage; error?: string };
+      if (redirectIfUnauthorized(response)) {
+        return;
+      }
 
       if (!response.ok || !payload.message) {
         throw new Error(await getErrorMessageFromResponse(response, payload));
@@ -184,6 +208,7 @@ export function ChatContainer() {
       await streamAssistantReply(chatId, historyForModel, model);
     } catch (sendError) {
       const message = sendError instanceof Error ? sendError.message : "Unable to send message.";
+      if (message === "Unauthorized") return;
       setError(message);
     } finally {
       setIsSending(false);

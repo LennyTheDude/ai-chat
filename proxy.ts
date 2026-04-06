@@ -29,10 +29,26 @@ export async function proxy(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
+  const path = request.nextUrl.pathname;
 
-  if (!user) {
+  // Base route should always forward to auth or chat.
+  if (path === "/") {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = user ? "/chat" : "/auth";
+    return NextResponse.redirect(redirectUrl);
+  }
+
+  // Unauthenticated users can only access /auth.
+  if (!user && path !== "/auth") {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/auth";
+    return NextResponse.redirect(redirectUrl);
+  }
+
+  // Authenticated users should always land on chat instead of auth.
+  if (user && path === "/auth") {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = "/chat";
     return NextResponse.redirect(redirectUrl);
   }
 
@@ -40,5 +56,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/chat/:path*"],
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
 };

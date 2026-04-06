@@ -183,23 +183,6 @@ export function AuthForm() {
           {isSubmitting ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
         </button>
       </form>
-
-      <button
-        type="button"
-        onClick={handleSignOut}
-        style={{
-          alignSelf: "flex-start",
-          border: "none",
-          background: "transparent",
-          color: "var(--muted, #6b7280)",
-          cursor: "pointer",
-          fontSize: "0.9rem",
-          textDecoration: "underline",
-        }}
-      >
-        Sign out
-      </button>
-
       {status ? (
         <p
           style={{
