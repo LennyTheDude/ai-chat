@@ -2,6 +2,8 @@ import { AIModel, getModel } from "@/lib/ai";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { streamText } from "ai";
 
+const DAILY_TOKEN_LIMIT = 10000;
+
 type ChatApiMessage = {
   role?: "user" | "assistant" | "system";
   content?: string;
@@ -39,6 +41,10 @@ export async function POST(request: Request) {
     return Response.json({ error: "Unsupported model." }, { status: 400 });
   }
 
+  const provider = model === AIModel.CLAUDE ? "anthropic" : "openai";
+  const providerLabel = provider === "anthropic" ? "Claude" : "OpenAI";
+  const today = new Date().toISOString().slice(0, 10);
+
   const { data: chat, error: chatError } = await supabase
     .from("chats")
     .select("id")
@@ -48,6 +54,26 @@ export async function POST(request: Request) {
 
   if (chatError || !chat) {
     return Response.json({ error: "Chat not found" }, { status: 404 });
+  }
+
+  const { data: usageRow, error: usageReadError } = await supabase
+    .from("usage")
+    .select("total_tokens")
+    .eq("user_id", user.id)
+    .eq("provider", provider)
+    .eq("day", today)
+    .maybeSingle();
+
+  if (usageReadError) {
+    return Response.json({ error: usageReadError.message }, { status: 500 });
+  }
+
+  const usedToday = usageRow?.total_tokens ?? 0;
+  if (usedToday >= DAILY_TOKEN_LIMIT) {
+    return Response.json(
+      { error: `${providerLabel} daily token limit reached (${DAILY_TOKEN_LIMIT}/day).` },
+      { status: 429 },
+    );
   }
 
   try {
@@ -66,19 +92,35 @@ export async function POST(request: Request) {
           });
         }
 
-        const usedTokens = totalUsage.totalTokens ?? 0;
-        if (usedTokens > 0) {
-          const { data: usageRow } = await supabase
-            .from("usage")
-            .select("tokens_used")
-            .eq("user_id", user.id)
-            .maybeSingle();
+        const inputTokens = totalUsage.inputTokens ?? 0;
+        const outputTokens = totalUsage.outputTokens ?? 0;
+        const totalTokens = totalUsage.totalTokens ?? inputTokens + outputTokens;
 
-          const nextTokens = (usageRow?.tokens_used ?? 0) + usedTokens;
-          await supabase
-            .from("usage")
-            .upsert({ user_id: user.id, tokens_used: nextTokens }, { onConflict: "user_id" });
-        }
+        if (totalTokens <= 0) return;
+
+        const { data: existingUsage } = await supabase
+          .from("usage")
+          .select("input_tokens, output_tokens, total_tokens")
+          .eq("user_id", user.id)
+          .eq("provider", provider)
+          .eq("day", today)
+          .maybeSingle();
+
+        const nextInput = (existingUsage?.input_tokens ?? 0) + inputTokens;
+        const nextOutput = (existingUsage?.output_tokens ?? 0) + outputTokens;
+        const nextTotal = (existingUsage?.total_tokens ?? 0) + totalTokens;
+
+        await supabase.from("usage").upsert(
+          {
+            user_id: user.id,
+            provider,
+            day: today,
+            input_tokens: nextInput,
+            output_tokens: nextOutput,
+            total_tokens: nextTotal,
+          },
+          { onConflict: "user_id,provider,day" },
+        );
       },
     });
 

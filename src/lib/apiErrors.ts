@@ -9,7 +9,7 @@ export async function getErrorMessageFromResponse(
   if (response.status === 429) {
     return (
       fallbackPayload?.error ??
-      "You’ve reached your message limit. Try again later or contact support."
+      "You’ve reached your daily token limit for this model."
     );
   }
   if (fallbackPayload?.error) {

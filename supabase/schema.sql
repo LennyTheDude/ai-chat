@@ -15,7 +15,11 @@ create table if not exists public.messages (
 );
 
 create table if not exists public.usage (
-  user_id uuid primary key references auth.users(id) on delete cascade,
-  requests_count integer not null default 0,
-  tokens_used integer not null default 0
+  user_id uuid not null references auth.users(id) on delete cascade,
+  provider text not null check (provider in ('openai', 'anthropic')),
+  day date not null default (now() at time zone 'utc')::date,
+  input_tokens integer not null default 0,
+  output_tokens integer not null default 0,
+  total_tokens integer not null default 0,
+  primary key (user_id, provider, day)
 );

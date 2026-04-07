@@ -8,7 +8,7 @@ export enum AIModel {
 
 export function getModel(model: AIModel) {
   if (model === AIModel.CLAUDE) {
-    return anthropic("claude-3-5-haiku-latest");
+    return anthropic("claude-haiku-4-5");
   }
 
   return openai("gpt-4o-mini");
