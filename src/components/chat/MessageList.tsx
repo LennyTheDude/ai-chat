@@ -1,3 +1,4 @@
+import { ChatMarkdown } from "./ChatMarkdown";
 import type { ChatMessage } from "./types";
 
 type MessageListProps = {
@@ -31,11 +32,16 @@ export function MessageList({ messages, emptyHint }: MessageListProps) {
       {messages.map((message) => {
         const isUser = message.role === "user";
         const isThisAwaiting = !isUser && awaitingTokens && message.id === last.id;
-        const body =
+        const body = isUser ? (
           message.content ||
           (isThisAwaiting ? (
             <span style={{ color: "#9ca3af", fontStyle: "italic" }}>Responding…</span>
-          ) : null);
+          ) : null)
+        ) : message.content ? (
+          <ChatMarkdown content={message.content} />
+        ) : isThisAwaiting ? (
+          <span style={{ color: "#9ca3af", fontStyle: "italic" }}>Responding…</span>
+        ) : null;
 
         return (
           <div

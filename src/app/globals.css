@@ -71,3 +71,129 @@ a {
     color-scheme: dark;
   }
 }
+
+/* Assistant message markdown (streaming-safe: re-parsed on each chunk) */
+.chat-markdown {
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.chat-markdown > *:first-child {
+  margin-top: 0;
+}
+
+.chat-markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.chat-markdown p {
+  margin: 0.55em 0;
+}
+
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4 {
+  margin: 0.85em 0 0.45em;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+.chat-markdown h1 {
+  font-size: 1.25rem;
+}
+
+.chat-markdown h2 {
+  font-size: 1.1rem;
+}
+
+.chat-markdown h3,
+.chat-markdown h4 {
+  font-size: 1rem;
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  margin: 0.5em 0;
+  padding-left: 1.35rem;
+}
+
+.chat-markdown li {
+  margin: 0.25em 0;
+}
+
+.chat-markdown blockquote {
+  margin: 0.6em 0;
+  padding: 0.35rem 0 0.35rem 0.85rem;
+  border-left: 3px solid #d1d5db;
+  color: #4b5563;
+}
+
+.chat-markdown hr {
+  margin: 0.85rem 0;
+  border: none;
+  border-top: 1px solid #e5e7eb;
+}
+
+.chat-markdown a {
+  color: #2563eb;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chat-markdown a:hover {
+  color: #1d4ed8;
+}
+
+.chat-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 0.9em;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid #e5e7eb;
+  padding: 0.4rem 0.55rem;
+  text-align: left;
+}
+
+.chat-markdown th {
+  background: #e5e7eb;
+  font-weight: 600;
+}
+
+.chat-markdown pre {
+  margin: 0.6em 0;
+  padding: 0.75rem 0.85rem;
+  border-radius: 8px;
+  background: #e5e7eb;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 0.86em;
+  line-height: 1.45;
+}
+
+.chat-markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 0.9em;
+}
+
+.chat-markdown p code,
+.chat-markdown li code,
+.chat-markdown td code {
+  padding: 0.12em 0.35em;
+  border-radius: 5px;
+  background: #e5e7eb;
+  font-size: 0.88em;
+}
+
+.chat-markdown pre code {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 1em;
+}
