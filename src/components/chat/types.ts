@@ -12,5 +12,6 @@ export type ChatModel = "openai" | "claude";
 export type ChatSummary = {
   id: string;
   title: string;
+  model: ChatModel;
   created_at: string;
 };

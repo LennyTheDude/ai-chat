@@ -62,7 +62,11 @@ export function ChatContainer() {
     setIsLoadingMessages(true);
     setError(null);
     const response = await fetch(`/api/chats/${chatId}`);
-    const payload = (await response.json()) as { messages?: ChatMessage[]; error?: string };
+    const payload = (await response.json()) as {
+      messages?: ChatMessage[];
+      model?: ChatModel;
+      error?: string;
+    };
     if (redirectIfUnauthorized(response)) return;
 
     if (!response.ok) {
@@ -71,7 +75,13 @@ export function ChatContainer() {
       return;
     }
 
-    setMessages(payload.messages ?? []);
+    const list = payload.messages ?? [];
+    setMessages(list);
+    if (payload.model === "claude" || payload.model === "openai") {
+      setModel(payload.model);
+    } else {
+      setModel("openai");
+    }
     setIsLoadingMessages(false);
   }, [redirectIfUnauthorized]);
 
@@ -108,11 +118,11 @@ export function ChatContainer() {
     void loadChats();
   }, [loadChats]);
 
-  const createChat = async (title?: string) => {
+  const createChat = async (title?: string, preferredModel: ChatModel = "openai") => {
     const response = await fetch("/api/chats", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title }),
+      body: JSON.stringify({ title, model: preferredModel }),
     });
     const payload = (await response.json()) as { chat?: ChatSummary; error?: string };
     if (redirectIfUnauthorized(response)) {
@@ -199,7 +209,7 @@ export function ChatContainer() {
 
       if (!chatId) {
         const nextTitle = content.slice(0, 40);
-        chatId = await createChat(nextTitle || "New chat");
+        chatId = await createChat(nextTitle || "New chat", model);
         setActiveChatId(chatId);
         setMessages([]);
       }
@@ -231,7 +241,33 @@ export function ChatContainer() {
   const handleNewChat = () => {
     setActiveChatId(null);
     setMessages([]);
+    setModel("openai");
     setError(null);
+  };
+
+  const handleModelChange = async (next: ChatModel) => {
+    const previous = model;
+    setModel(next);
+    if (!activeChatId) return;
+
+    const response = await fetch(`/api/chats/${activeChatId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: next }),
+    });
+    const payload = (await response.json()) as { error?: string };
+    if (redirectIfUnauthorized(response)) {
+      setModel(previous);
+      return;
+    }
+    if (!response.ok) {
+      setModel(previous);
+      setError(await getErrorMessageFromResponse(response, payload));
+      return;
+    }
+    setChats((chatsPrev) =>
+      chatsPrev.map((c) => (c.id === activeChatId ? { ...c, model: next } : c)),
+    );
   };
 
   const sidebarButtonBase: CSSProperties = {
@@ -356,7 +392,7 @@ export function ChatContainer() {
               Model: {getModelDisplayLabel(model)}
             </p>
           </div>
-          <ModelSelector value={model} onChange={setModel} />
+          <ModelSelector value={model} onChange={(next) => void handleModelChange(next)} />
         </header>
 
         <div

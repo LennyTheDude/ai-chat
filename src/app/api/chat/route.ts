@@ -97,6 +97,16 @@ export async function POST(request: Request) {
     return Response.json({ error: insertError.message }, { status: 500 });
   }
 
+  const { error: modelUpdateError } = await supabase
+    .from("chats")
+    .update({ model })
+    .eq("id", chatId)
+    .eq("user_id", user.id);
+
+  if (modelUpdateError) {
+    return Response.json({ error: modelUpdateError.message }, { status: 500 });
+  }
+
   const prepMs = Math.round(performance.now() - prepStarted);
 
   try {
