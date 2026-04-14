@@ -22,6 +22,8 @@ export function ChatContainer() {
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
+  const scrollRafRef = useRef<number | null>(null);
+  const [isReplyStreaming, setIsReplyStreaming] = useState(false);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -30,8 +32,20 @@ export function ChatContainer() {
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [messages]);
+
+    const scroll = () => {
+      el.scrollTo({ top: el.scrollHeight, behavior: isReplyStreaming ? "auto" : "smooth" });
+      scrollRafRef.current = null;
+    };
+
+    if (isReplyStreaming) {
+      if (scrollRafRef.current === null) {
+        scrollRafRef.current = requestAnimationFrame(scroll);
+      }
+    } else {
+      scroll();
+    }
+  }, [messages, isReplyStreaming]);
 
   const redirectIfUnauthorized = useCallback(
     (response: Response) => {
@@ -119,54 +133,59 @@ export function ChatContainer() {
     selectedModel: ChatModel,
   ) => {
     const assistantId = crypto.randomUUID();
+    setIsReplyStreaming(true);
     setMessages((previous) => [...previous, { id: assistantId, role: "assistant", content: "" }]);
 
-    const response = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chatId,
-        model: selectedModel,
-        messages: conversation.map((message) => ({
-          role: message.role,
-          content: message.content,
-        })),
-      }),
-    });
-
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => ({}))) as { error?: string };
-      setMessages((previous) => previous.filter((m) => m.id !== assistantId));
-      if (redirectIfUnauthorized(response)) {
-        throw new Error("Unauthorized");
-      }
-      throw new Error(await getErrorMessageFromResponse(response, payload));
-    }
-
-    if (!response.body) {
-      setMessages((previous) => previous.filter((m) => m.id !== assistantId));
-      throw new Error("No response body from assistant.");
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let aggregated = "";
-
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chatId,
+          model: selectedModel,
+          messages: conversation.map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
+        }),
+      });
 
-        aggregated += decoder.decode(value, { stream: true });
-        setMessages((previous) =>
-          previous.map((message) =>
-            message.id === assistantId ? { ...message, content: aggregated } : message,
-          ),
-        );
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        setMessages((previous) => previous.filter((m) => m.id !== assistantId));
+        if (redirectIfUnauthorized(response)) {
+          throw new Error("Unauthorized");
+        }
+        throw new Error(await getErrorMessageFromResponse(response, payload));
       }
-    } catch {
-      setMessages((previous) => previous.filter((m) => m.id !== assistantId));
-      throw new Error("Stream interrupted. Try sending again.");
+
+      if (!response.body) {
+        setMessages((previous) => previous.filter((m) => m.id !== assistantId));
+        throw new Error("No response body from assistant.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let aggregated = "";
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          aggregated += decoder.decode(value, { stream: true });
+          setMessages((previous) =>
+            previous.map((message) =>
+              message.id === assistantId ? { ...message, content: aggregated } : message,
+            ),
+          );
+        }
+      } catch {
+        setMessages((previous) => previous.filter((m) => m.id !== assistantId));
+        throw new Error("Stream interrupted. Try sending again.");
+      }
+    } finally {
+      setIsReplyStreaming(false);
     }
   };
 
@@ -176,6 +195,7 @@ export function ChatContainer() {
 
     try {
       let chatId = activeChatId;
+      const startedWithoutActiveChat = activeChatId === null;
 
       if (!chatId) {
         const nextTitle = content.slice(0, 40);
@@ -184,26 +204,13 @@ export function ChatContainer() {
         setMessages([]);
       }
 
-      const response = await fetch("/api/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chatId,
-          role: "user",
-          content,
-        }),
-      });
-      const payload = (await response.json()) as { message?: ChatMessage; error?: string };
-      if (redirectIfUnauthorized(response)) {
-        return;
-      }
-
-      if (!response.ok || !payload.message) {
-        throw new Error(await getErrorMessageFromResponse(response, payload));
-      }
-
-      const userRow = payload.message;
-      const historyForModel = [...messagesRef.current, userRow];
+      const userRow: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content,
+      };
+      const priorMessages = startedWithoutActiveChat ? [] : messagesRef.current;
+      const historyForModel = [...priorMessages, userRow];
       setMessages(historyForModel);
       await streamAssistantReply(chatId, historyForModel, model);
     } catch (sendError) {

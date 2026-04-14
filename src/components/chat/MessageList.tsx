@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { ChatMarkdown } from "./ChatMarkdown";
 import type { ChatMessage } from "./types";
 
@@ -6,6 +7,44 @@ type MessageListProps = {
   /** When there are no messages, show this instead of the generic hint. */
   emptyHint?: string | null;
 };
+
+type MessageRowProps = {
+  message: ChatMessage;
+  isThisAwaiting: boolean;
+};
+
+const MessageRow = memo(function MessageRow({ message, isThisAwaiting }: MessageRowProps) {
+  const isUser = message.role === "user";
+
+  const body = isUser ? (
+    message.content ||
+    (isThisAwaiting ? (
+      <span style={{ color: "#9ca3af", fontStyle: "italic" }}>Responding…</span>
+    ) : null)
+  ) : message.content ? (
+    <ChatMarkdown content={message.content} />
+  ) : isThisAwaiting ? (
+    <span style={{ color: "#9ca3af", fontStyle: "italic" }}>Responding…</span>
+  ) : null;
+
+  return (
+    <div
+      style={{
+        maxWidth: "85%",
+        alignSelf: isUser ? "flex-end" : "flex-start",
+        padding: "0.7rem 0.9rem",
+        borderRadius: 12,
+        lineHeight: 1.5,
+        fontSize: "0.95rem",
+        background: isUser ? "#171717" : "#f3f4f6",
+        color: isUser ? "#fff" : "#171717",
+        wordBreak: "break-word",
+      }}
+    >
+      {body}
+    </div>
+  );
+});
 
 export function MessageList({ messages, emptyHint }: MessageListProps) {
   if (messages.length === 0) {
@@ -30,36 +69,15 @@ export function MessageList({ messages, emptyHint }: MessageListProps) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
       {messages.map((message) => {
-        const isUser = message.role === "user";
-        const isThisAwaiting = !isUser && awaitingTokens && message.id === last.id;
-        const body = isUser ? (
-          message.content ||
-          (isThisAwaiting ? (
-            <span style={{ color: "#9ca3af", fontStyle: "italic" }}>Responding…</span>
-          ) : null)
-        ) : message.content ? (
-          <ChatMarkdown content={message.content} />
-        ) : isThisAwaiting ? (
-          <span style={{ color: "#9ca3af", fontStyle: "italic" }}>Responding…</span>
-        ) : null;
+        const isThisAwaiting =
+          message.role === "assistant" && awaitingTokens && message.id === last.id;
 
         return (
-          <div
+          <MessageRow
             key={message.id}
-            style={{
-              maxWidth: "85%",
-              alignSelf: isUser ? "flex-end" : "flex-start",
-              padding: "0.7rem 0.9rem",
-              borderRadius: 12,
-              lineHeight: 1.5,
-              fontSize: "0.95rem",
-              background: isUser ? "#171717" : "#f3f4f6",
-              color: isUser ? "#fff" : "#171717",
-              wordBreak: "break-word",
-            }}
-          >
-            {body}
-          </div>
+            message={message}
+            isThisAwaiting={Boolean(isThisAwaiting)}
+          />
         );
       })}
     </div>

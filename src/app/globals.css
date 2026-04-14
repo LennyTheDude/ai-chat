@@ -72,7 +72,7 @@ a {
   }
 }
 
-/* Assistant message markdown (streaming-safe: re-parsed on each chunk) */
+/* Assistant message markdown (including while streaming) */
 .chat-markdown {
   font-size: 0.95rem;
   line-height: 1.55;

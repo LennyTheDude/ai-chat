@@ -16,6 +16,8 @@ type ChatApiRequest = {
 };
 
 export async function POST(request: Request) {
+  const prepStarted = performance.now();
+
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -45,36 +47,57 @@ export async function POST(request: Request) {
   const providerLabel = provider === "anthropic" ? "Claude" : "OpenAI";
   const today = new Date().toISOString().slice(0, 10);
 
-  const { data: chat, error: chatError } = await supabase
-    .from("chats")
-    .select("id")
-    .eq("id", chatId)
-    .eq("user_id", user.id)
-    .single();
+  const [chatResult, usageResult] = await Promise.all([
+    supabase.from("chats").select("id").eq("id", chatId).eq("user_id", user.id).single(),
+    supabase
+      .from("usage")
+      .select("total_tokens")
+      .eq("user_id", user.id)
+      .eq("provider", provider)
+      .eq("day", today)
+      .maybeSingle(),
+  ]);
 
-  if (chatError || !chat) {
+  if (chatResult.error || !chatResult.data) {
     return Response.json({ error: "Chat not found" }, { status: 404 });
   }
 
-  const { data: usageRow, error: usageReadError } = await supabase
-    .from("usage")
-    .select("total_tokens")
-    .eq("user_id", user.id)
-    .eq("provider", provider)
-    .eq("day", today)
-    .maybeSingle();
-
-  if (usageReadError) {
-    return Response.json({ error: usageReadError.message }, { status: 500 });
+  if (usageResult.error) {
+    return Response.json({ error: usageResult.error.message }, { status: 500 });
   }
 
-  const usedToday = usageRow?.total_tokens ?? 0;
+  const usedToday = usageResult.data?.total_tokens ?? 0;
   if (usedToday >= DAILY_TOKEN_LIMIT) {
     return Response.json(
       { error: `${providerLabel} daily token limit reached (${DAILY_TOKEN_LIMIT}/day).` },
       { status: 429 },
     );
   }
+
+  const last = messages[messages.length - 1];
+  if (last?.role !== "user") {
+    return Response.json(
+      { error: "Last message must be a user message when starting a turn." },
+      { status: 400 },
+    );
+  }
+
+  const userContent = last.content?.trim() ?? "";
+  if (!userContent) {
+    return Response.json({ error: "User message content is required." }, { status: 400 });
+  }
+
+  const { error: insertError } = await supabase.from("messages").insert({
+    chat_id: chatId,
+    role: "user",
+    content: userContent,
+  });
+
+  if (insertError) {
+    return Response.json({ error: insertError.message }, { status: 500 });
+  }
+
+  const prepMs = Math.round(performance.now() - prepStarted);
 
   try {
     const result = streamText({
@@ -127,6 +150,7 @@ export async function POST(request: Request) {
     return result.toTextStreamResponse({
       headers: {
         "Cache-Control": "no-store",
+        "Server-Timing": `prep;dur=${prepMs};desc="before-llm"`,
       },
     });
   } catch {
