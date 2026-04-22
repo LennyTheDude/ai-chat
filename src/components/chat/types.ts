@@ -13,5 +13,7 @@ export type ChatSummary = {
   id: string;
   title: string;
   model: ChatModel;
+  gpt_id: string | null;
+  metadata: Record<string, unknown> | null;
   created_at: string;
 };

@@ -4,6 +4,8 @@ create table if not exists public.chats (
   user_id uuid not null references auth.users(id) on delete cascade,
   title text not null default 'New chat',
   model text not null default 'openai' check (model in ('openai', 'claude')),
+  gpt_id text,
+  metadata jsonb,
   created_at timestamptz not null default now()
 );
 

@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getErrorMessageFromResponse } from "@/lib/apiErrors";
+import { customGPTs, type CustomGPT } from "@/lib/custom-gpts";
 import { getModelDisplayLabel } from "@/lib/modelLabels";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
@@ -16,9 +17,12 @@ export function ChatContainer() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [activeGptId, setActiveGptId] = useState<string | null>(null);
+  const [activeGpt, setActiveGpt] = useState<CustomGPT | null>(null);
   const [isLoadingChats, setIsLoadingChats] = useState(true);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isRestarting, setIsRestarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
@@ -29,12 +33,18 @@ export function ChatContainer() {
     messagesRef.current = messages;
   }, [messages]);
 
+  const isQuizSimpleChat = activeGpt?.type === "quiz_simple";
+  const isInputDisabled = isSending || isRestarting;
+
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
 
     const scroll = () => {
-      el.scrollTo({ top: el.scrollHeight, behavior: isReplyStreaming ? "auto" : "smooth" });
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: isReplyStreaming || isQuizSimpleChat ? "auto" : "smooth",
+      });
       scrollRafRef.current = null;
     };
 
@@ -45,7 +55,7 @@ export function ChatContainer() {
     } else {
       scroll();
     }
-  }, [messages, isReplyStreaming]);
+  }, [messages, isReplyStreaming, isQuizSimpleChat]);
 
   const redirectIfUnauthorized = useCallback(
     (response: Response) => {
@@ -65,6 +75,7 @@ export function ChatContainer() {
     const payload = (await response.json()) as {
       messages?: ChatMessage[];
       model?: ChatModel;
+      gpt_id?: string | null;
       error?: string;
     };
     if (redirectIfUnauthorized(response)) return;
@@ -82,6 +93,9 @@ export function ChatContainer() {
     } else {
       setModel("openai");
     }
+    const nextGptId = payload.gpt_id ?? null;
+    setActiveGptId(nextGptId);
+    setActiveGpt(nextGptId ? customGPTs.find((gpt) => gpt.id === nextGptId) ?? null : null);
     setIsLoadingMessages(false);
   }, [redirectIfUnauthorized]);
 
@@ -103,12 +117,16 @@ export function ChatContainer() {
     setChats(nextChats);
 
     if (nextChats.length > 0) {
-      const firstChatId = nextChats[0].id;
+      const firstChat = nextChats[0];
+      const firstChatId = firstChat.id;
       setActiveChatId(firstChatId);
+      setActiveGptId(firstChat.gpt_id ?? null);
       await loadMessages(firstChatId);
     } else {
       setMessages([]);
       setActiveChatId(null);
+      setActiveGptId(null);
+      setActiveGpt(null);
     }
 
     setIsLoadingChats(false);
@@ -135,6 +153,30 @@ export function ChatContainer() {
 
     setChats((previous) => [payload.chat!, ...previous]);
     return payload.chat.id;
+  };
+
+  const createGptChat = async (gptId: string) => {
+    const selectedGpt = customGPTs.find((gpt) => gpt.id === gptId);
+    const title = selectedGpt?.name ?? "New chat";
+    const response = await fetch("/api/chats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        model: "openai",
+        gpt_id: gptId,
+        metadata: {},
+      }),
+    });
+    const payload = (await response.json()) as { chat?: ChatSummary; error?: string };
+    if (redirectIfUnauthorized(response)) {
+      throw new Error("Unauthorized");
+    }
+    if (!response.ok || !payload.chat) {
+      throw new Error(await getErrorMessageFromResponse(response, payload));
+    }
+    setChats((previous) => [payload.chat!, ...previous]);
+    return payload.chat;
   };
 
   const streamAssistantReply = async (
@@ -235,14 +277,37 @@ export function ChatContainer() {
   const handleSelectChat = (chatId: string) => {
     setActiveChatId(chatId);
     setError(null);
+    const selectedChat = chats.find((chat) => chat.id === chatId);
+    const nextGptId = selectedChat?.gpt_id ?? null;
+    setActiveGptId(nextGptId);
+    setActiveGpt(nextGptId ? customGPTs.find((gpt) => gpt.id === nextGptId) ?? null : null);
     void loadMessages(chatId);
   };
 
   const handleNewChat = () => {
     setActiveChatId(null);
+    setActiveGptId(null);
+    setActiveGpt(null);
     setMessages([]);
     setModel("openai");
     setError(null);
+  };
+
+  const handleSelectCustomGpt = async (gptId: string) => {
+    setError(null);
+    try {
+      const chat = await createGptChat(gptId);
+      setActiveChatId(chat.id);
+      setActiveGptId(chat.gpt_id ?? gptId);
+      setActiveGpt(customGPTs.find((gpt) => gpt.id === (chat.gpt_id ?? gptId)) ?? null);
+      setModel(chat.model);
+      setMessages([]);
+      void loadMessages(chat.id);
+    } catch (createError) {
+      const message = createError instanceof Error ? createError.message : "Unable to create GPT chat.";
+      if (message === "Unauthorized") return;
+      setError(message);
+    }
   };
 
   const handleModelChange = async (next: ChatModel) => {
@@ -268,6 +333,31 @@ export function ChatContainer() {
     setChats((chatsPrev) =>
       chatsPrev.map((c) => (c.id === activeChatId ? { ...c, model: next } : c)),
     );
+  };
+
+  const handleRestartChat = async () => {
+    if (!activeChatId || !activeGpt) return;
+    setIsRestarting(true);
+    setError(null);
+
+    const response = await fetch(`/api/chats/${activeChatId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ restart: true }),
+    });
+    const payload = (await response.json()) as { error?: string };
+    if (redirectIfUnauthorized(response)) {
+      setIsRestarting(false);
+      return;
+    }
+    if (!response.ok) {
+      setError(await getErrorMessageFromResponse(response, payload));
+      setIsRestarting(false);
+      return;
+    }
+
+    setMessages([]);
+    setIsRestarting(false);
   };
 
   const sidebarButtonBase: CSSProperties = {
@@ -338,6 +428,36 @@ export function ChatContainer() {
         </button>
 
         <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+          <p style={{ margin: "0.15rem 0", fontSize: "0.78rem", color: "#6b7280", fontWeight: 600 }}>
+            Custom GPTs
+          </p>
+          {customGPTs.map((gpt) => (
+            <button
+              key={gpt.id}
+              type="button"
+              onClick={() => void handleSelectCustomGpt(gpt.id)}
+              title={gpt.description}
+              style={{
+                ...sidebarButtonBase,
+                background: activeGptId === gpt.id ? "#e5e7eb" : "#fff",
+                fontWeight: activeGptId === gpt.id ? 600 : 400,
+              }}
+              onMouseEnter={(e) => {
+                if (activeGptId !== gpt.id) e.currentTarget.style.background = "#f3f4f6";
+              }}
+              onMouseLeave={(e) => {
+                if (activeGptId !== gpt.id) e.currentTarget.style.background = "#fff";
+              }}
+            >
+              {gpt.name}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+          <p style={{ margin: "0.15rem 0", fontSize: "0.78rem", color: "#6b7280", fontWeight: 600 }}>
+            Chats
+          </p>
           {isLoadingChats ? (
             <>
               {[0, 1, 2].map((i) => (
@@ -386,13 +506,39 @@ export function ChatContainer() {
         >
           <div>
             <h1 style={{ fontSize: "1.5rem", fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
-              Chat
+              {activeGpt?.name ?? "Chat"}
             </h1>
+            {activeGpt ? (
+              <p style={{ margin: "0.35rem 0 0", fontSize: "0.82rem", color: "#6b7280" }}>
+                {activeGpt.description}
+              </p>
+            ) : null}
             <p style={{ margin: "0.35rem 0 0", fontSize: "0.8rem", color: "#6b7280" }}>
               Model: {getModelDisplayLabel(model)}
             </p>
           </div>
-          <ModelSelector value={model} onChange={(next) => void handleModelChange(next)} />
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            {activeGpt && activeChatId ? (
+              <button
+                type="button"
+                onClick={() => void handleRestartChat()}
+                disabled={isRestarting}
+                style={{
+                  border: "1px solid #d1d5db",
+                  borderRadius: 10,
+                  padding: "0.45rem 0.7rem",
+                  background: isRestarting ? "#f9fafb" : "#fff",
+                  color: "#111827",
+                  fontSize: "0.82rem",
+                  fontWeight: 600,
+                  cursor: isRestarting ? "not-allowed" : "pointer",
+                }}
+              >
+                {isRestarting ? "Restarting..." : "Restart"}
+              </button>
+            ) : null}
+            <ModelSelector value={model} onChange={(next) => void handleModelChange(next)} />
+          </div>
         </header>
 
         <div
@@ -434,13 +580,19 @@ export function ChatContainer() {
           </div>
         ) : null}
 
+        {isQuizSimpleChat ? (
+          <p style={{ fontSize: "0.8rem", color: "#6b7280", margin: 0 }}>Hint: Answer A/B/C/D</p>
+        ) : null}
+
         {isSending ? (
-          <p style={{ fontSize: "0.8rem", color: "#6b7280", margin: 0 }}>Sending or streaming response…</p>
+          <p style={{ fontSize: "0.8rem", color: "#6b7280", margin: 0 }}>
+            {isQuizSimpleChat ? "Checking answer..." : "Sending or streaming response…"}
+          </p>
         ) : null}
 
         <MessageInput
           onSendMessage={(content) => void handleSendMessage(content)}
-          disabled={isSending}
+          disabled={isInputDisabled}
           onDismissError={() => setError(null)}
         />
       </div>
